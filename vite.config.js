@@ -8,6 +8,9 @@ import commonjs from '@rollup/plugin-commonjs';
  */
 const config = {
   envDir: process.cwd(),
+  define: {
+    'process.env.FLUENTFFMPEG_COV': false,
+  },
   build: {
     minify: false,
     sourcemap: 'inline',

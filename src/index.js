@@ -1,18 +1,75 @@
-import fs from 'node:fs';
+import ffmpeg from 'fluent-ffmpeg';
 import pkg from '../package.json';
-
-const ffmpeg = require('fluent-ffmpeg');
 
 const id = pkg.name;
 
-const setFfmpegPath = (ff, path) => {
-  try {
-    fs.accessSync(path);
-    ff.setFfmpegPath(path);
-  } catch (err) {
-    // mute
+const setFfmpegPath = (ff, settingPath) => {
+  if (typeof settingPath?.[0] === 'string') {
+    ff.setFfmpegPath(settingPath[0]);
   }
 };
+
+let currentProgress = {};
+let command = null;
+const stopRecord = () => {
+  if (command) {
+    command?.ffmpegProc?.stdin?.write('q');
+  }
+};
+
+// ipc 定义
+const ipcHandlers = [
+  {
+    type: 'record',
+    handler: ({ sendToClient }) => (url, saveDir, options = {}) => {
+      const finalOptions = {
+        ...{
+          splitTimeout: 60,
+          saveFilenameTemplate: 'test_%03d',
+          audioCodec: 'copy',
+          videoCodec: 'copy',
+        },
+        ...options,
+      };
+
+      const getOutputFilePath = () => `${saveDir}${finalOptions.saveFilenameTemplate}.mp4`;
+      const startRecord = () => {
+        stopRecord();
+        command = ffmpeg(url)
+          .output(getOutputFilePath())
+          .audioCodec(finalOptions.audioCodec)
+          .videoCodec(finalOptions.videoCodec);
+        if (typeof finalOptions.splitTimeout === 'number' && finalOptions.splitTimeout > 0) {
+          command.outputOptions([
+            '-f segment', // 分割输出为多个文件
+            `-segment_time ${finalOptions.splitTimeout}`, // 分割时长
+            '-reset_timestamps 1', // 重置分段文件的时间戳
+          ]);
+        }
+        command.on('end', () => {
+          sendToClient(`stop-reply@${id}`);
+        })
+          .on('progress', (progress) => {
+            currentProgress = progress;
+            sendToClient(`progress-reply@${id}`, currentProgress);
+          })
+          .on('error', (err) => {
+            sendToClient(`error-reply@${id}`, err.message);
+          })
+          .run();
+      };
+
+      startRecord();
+    },
+  },
+  {
+    type: 'stop',
+    handler: () => () => {
+      stopRecord();
+    },
+  },
+];
+
 // 加载时执行
 const pluginDidLoad = () => {
   const setting = global.store.get(`plugin.${id}.settings`, {});
@@ -23,7 +80,7 @@ const pluginDidLoad = () => {
 
 // 禁用时执行
 const pluginWillUnload = () => {
-  console.log('plugin unloaded');
+  stopRecord();
 };
 
 const pluginSettingSaved = () => {
@@ -51,59 +108,10 @@ const settingMenu = [
   },
 ];
 
-// 插件上下文菜单
-// https://www.electronjs.org/zh/docs/latest/api/menu-item
-const pluginMenu = [
-  {
-    id: `${id}-custom-menu`,
-    label: 'custom menu',
-    click() {
-      console.log('custom menu clicked');
-    },
-  },
-];
-
-let currentProgress = {};
-// ipc 定义
-const ipcHandlers = [
-  {
-    type: 'record', // 调用时需加上`@${id}`，此处为 'test-ipc@translime-plugin-my-plugin'
-    handler: () => (url) => {
-      const outputFilePath = 'C:\\Users\\admin\\AppData\\Roaming\\translime\\recorder-test\\test.mp4';
-      const durationInSeconds = 60;
-      let fileCounter = 1;
-
-      const startRecord = () => {
-        const setting = global.store.get(`plugin.${id}.settings`, {});
-        const command = ffmpeg(url);
-        setFfmpegPath(command, setting['ffmpeg-path']);
-        command.output(outputFilePath)
-          .on('end', () => {
-            console.log('on end event');
-          })
-          .on('progress', (progress) => {
-            currentProgress = progress;
-            console.log(`Processing: ${progress.percent}% done`);
-          })
-          .run();
-      };
-
-      startRecord();
-    },
-  },
-  {
-    type: 'progress',
-    handler: ({ sendToClient }) => () => {
-      sendToClient(`progress-reply@${id}`, currentProgress);
-    },
-  },
-];
-
 module.exports = {
   pluginDidLoad,
   pluginWillUnload,
   pluginSettingSaved,
   settingMenu,
-  pluginMenu,
   ipcHandlers,
 };
