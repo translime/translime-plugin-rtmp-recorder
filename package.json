@@ -1,7 +1,7 @@
 {
   "name": "translime-plugin-rtmp-recorder",
   "version": "1.0.0",
-  "description": "a plugin template",
+  "description": "translime 插件：rtmp 流视频保存到文件",
   "license": "MIT",
   "keywords": [
     "translime",
@@ -29,6 +29,7 @@
     "@rollup/plugin-commonjs": "^24.0.1",
     "@rollup/plugin-node-resolve": "^15.0.1",
     "@vitejs/plugin-vue": "^4.0.0",
+    "dayjs": "^1.11.8",
     "eslint": "7.32.0",
     "eslint-config-airbnb-base": "14.2.1",
     "eslint-import-resolver-alias": "^1.1.2",
@@ -42,7 +43,7 @@
   },
   "plugin": {
     "title": "直播录像",
-    "description": "rtmp流视频保存到文件",
+    "description": "rtmp 流视频保存到文件",
     "ui": "dist/ui.esm.js"
   },
   "peerDependencies": {

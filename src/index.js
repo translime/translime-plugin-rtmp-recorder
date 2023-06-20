@@ -11,9 +11,14 @@ const setFfmpegPath = (ff, settingPath) => {
 
 let currentProgress = {};
 let command = null;
-const stopRecord = () => {
+const stopRecord = (force = false) => {
   if (command) {
     command?.ffmpegProc?.stdin?.write('q');
+    if (force) {
+      setTimeout(() => {
+        command?.kill('SIGINT');
+      }, 5000);
+    }
   }
 };
 
@@ -21,11 +26,11 @@ const stopRecord = () => {
 const ipcHandlers = [
   {
     type: 'record',
-    handler: ({ sendToClient }) => (url, saveDir, options = {}) => {
+    handler: ({ sendToClient }) => ({ url, saveDir, options = {} }) => {
       const finalOptions = {
         ...{
           splitTimeout: 60,
-          saveFilenameTemplate: 'test_%03d',
+          saveFilenameTemplate: 'record_%03d',
           audioCodec: 'copy',
           videoCodec: 'copy',
         },
@@ -65,7 +70,7 @@ const ipcHandlers = [
   {
     type: 'stop',
     handler: () => () => {
-      stopRecord();
+      stopRecord(true);
     },
   },
 ];
