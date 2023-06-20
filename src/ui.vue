@@ -129,16 +129,19 @@ const start = () => {
   isProcessing.value = true;
   saveOptions();
 };
+const clearCheckProgressTimeout = () => {
+  if (checkProgressTimer.value) {
+    clearTimeout(checkProgressTimer.value);
+    checkProgressTimer.value = null;
+  }
+};
 
 // 进度
 const onProgress = () => {
   ipc.on(`progress-reply@${pluginId}`, (p) => {
     currentProgress.value = p;
     isProcessing.value = true;
-    if (checkProgressTimer.value) {
-      clearTimeout(checkProgressTimer.value);
-      checkProgressTimer.value = null;
-    }
+    clearCheckProgressTimeout();
   });
 };
 
@@ -147,6 +150,7 @@ const onError = () => {
   ipc.on(`error-reply@${pluginId}`, (err) => {
     error.value = err;
     isProcessing.value = false;
+    clearCheckProgressTimeout();
   });
 };
 
@@ -154,6 +158,7 @@ const onError = () => {
 const onStop = () => {
   ipc.on(`stop-reply@${pluginId}`, () => {
     isProcessing.value = false;
+    clearCheckProgressTimeout();
   });
 };
 
