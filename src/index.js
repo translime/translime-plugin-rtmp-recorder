@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import ffmpeg from 'fluent-ffmpeg';
 import pkg from '../package.json';
 
@@ -37,7 +38,7 @@ const ipcHandlers = [
         ...options,
       };
 
-      const getOutputFilePath = () => `${saveDir}${finalOptions.saveFilenameTemplate}.mp4`;
+      const getOutputFilePath = () => resolve(saveDir, `${finalOptions.saveFilenameTemplate}.mp4`);
       const startRecord = () => {
         stopRecord();
         command = ffmpeg(url)
