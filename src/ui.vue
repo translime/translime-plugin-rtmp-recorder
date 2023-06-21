@@ -14,15 +14,22 @@ const saveDir = ref('');
 const otherOptions = ref({
   splitTimeout: 3600,
   saveFilenameTemplate: '[record]_YYYY-MM-DD_HH-mm-ss_[%03d]',
+  saveFormat: 'mp4',
   audioCodec: 'copy',
   videoCodec: 'copy',
 });
 const isProcessing = ref(false);
+const tryStop = ref(false);
 const previewFilenameError = ref(false);
 const previewFilenameResult = ref('');
 const currentProgress = ref({});
 const error = ref('');
 const checkProgressTimer = ref(null);
+const stdLines = ref({
+  logs: [],
+  latest: '',
+  oneLine: true,
+});
 
 const useAlert = () => {
   const isVisible = ref(false);
@@ -34,6 +41,7 @@ const useAlert = () => {
     confirmPromise.value = null;
     isVisible.value = false;
   }
+
   function onCancel() {
     if (confirmPromise.value) {
       confirmPromise.value(false);
@@ -88,6 +96,7 @@ const saveOptions = async () => {
     'save-dir': saveDir.value,
     'split-timeout': otherOptions.value.splitTimeout,
     'save-filename-template': otherOptions.value.saveFilenameTemplate,
+    'save-format': otherOptions.value.saveFormat,
     'audio-codec': otherOptions.value.audioCodec,
     'video-codec': otherOptions.value.videoCodec,
   });
@@ -107,6 +116,7 @@ const checkOptions = () => {
   return false;
 };
 const stop = () => {
+  tryStop.value = true;
   ipc.send(`stop@${pluginId}`);
 };
 const start = () => {
@@ -121,6 +131,8 @@ const start = () => {
     stop();
     alert.show('录制进程30没有返回进度信息，进程已强制关闭。');
   }, 30000);
+  stdLines.value.latest = '';
+  stdLines.value.logs = [];
   ipc.send(`record@${pluginId}`, {
     url: url.value,
     saveDir: saveDir.value,
@@ -149,6 +161,7 @@ const onProgress = () => {
 const onError = () => {
   ipc.on(`error-reply@${pluginId}`, (err) => {
     error.value = err;
+    tryStop.value = false;
     isProcessing.value = false;
     clearCheckProgressTimeout();
   });
@@ -157,8 +170,23 @@ const onError = () => {
 // 结束
 const onStop = () => {
   ipc.on(`stop-reply@${pluginId}`, () => {
+    tryStop.value = false;
     isProcessing.value = false;
     clearCheckProgressTimeout();
+  });
+};
+
+// 输出
+const onStd = () => {
+  ipc.on(`stderr-reply@${pluginId}`, (line) => {
+    if (!line || /^\s*$/.test(line)) {
+      return;
+    }
+    const progressReg = /\s*frame=.*fps=.*speed=.*/i;
+    if (!progressReg.test(stdLines.value.latest) && !progressReg.test(line)) {
+      stdLines.value.logs.push(stdLines.value.latest);
+    }
+    stdLines.value.latest = line;
   });
 };
 
@@ -196,6 +224,9 @@ const getSetting = async () => {
   if (typeof setting?.['record-setting']?.['save-filename-template'] !== 'undefined') {
     otherOptions.value.saveFilenameTemplate = setting['record-setting']['save-filename-template'];
   }
+  if (typeof setting?.['record-setting']?.['save-format'] !== 'undefined') {
+    otherOptions.value.saveFormat = setting['record-setting']['save-format'];
+  }
   if (typeof setting?.['record-setting']?.['audio-codec'] !== 'undefined') {
     otherOptions.value.audioCodec = setting['record-setting']['audio-codec'];
   }
@@ -212,6 +243,7 @@ onMounted(() => {
   onProgress();
   onError();
   onStop();
+  onStd();
   getSetting();
 });
 </script>
@@ -273,12 +305,51 @@ export default {
         </div>
 
         <div class="d-flex align-center mt-4">
+          <v-btn
+            v-if="stdLines.latest ||stdLines.logs.length"
+            class="mr-4"
+            color="primary"
+            rounded="pill"
+            variant="outlined"
+            @click="stdLines.oneLine = !stdLines.oneLine"
+          >
+            切换输出窗口
+          </v-btn>
+
           <v-spacer />
 
-          <div v-if="isProcessing" class="mr-4">🔴</div>
-          <v-btn v-if="!isProcessing" color="primary" rounded="pill" @click="start">开始录制</v-btn>
-          <v-btn v-else color="primary" rounded="pill" variant="outlined" @click="stop">停止录制</v-btn>
+          <v-btn
+            v-if="!isProcessing"
+            color="primary"
+            rounded="pill"
+            :disabled="tryStop"
+            @click="start"
+          >
+            开始录制
+          </v-btn>
+
+          <template v-else>
+            <div class="mr-4">🔴</div>
+
+            <v-btn
+              color="primary"
+              rounded="pill"
+              variant="outlined"
+              :disabled="tryStop"
+              @click="stop"
+            >
+              停止录制
+            </v-btn>
+          </template>
         </div>
+
+        <v-sheet v-if="stdLines.latest ||stdLines.logs.length" class="mt-4 text-white" color="#300a24" rounded>
+          <pre class="log-area pa-2" :class="{ 'one-line': stdLines.oneLine }"><span
+            v-for="(line, index) in stdLines.logs"
+            :key="index"
+            v-text="`${line}\n`"
+          ></span><span class="latest-line" v-text="stdLines.latest"></span></pre>
+        </v-sheet>
       </v-card-text>
     </v-card>
 
@@ -352,17 +423,35 @@ export default {
           </v-col>
         </v-row>
 
-        <div class="mt-4">
-          <v-text-field
-            v-model="otherOptions.saveFilenameTemplate"
-            color="primary"
-            label="保存文件名模板"
-            :hint="`预览：${previewFilenameResult}`"
-            :error="previewFilenameError"
-            @update:model-value="getPreviewFilename"
-            @focus="getPreviewFilename"
-          />
-        </div>
+        <v-row class="mt-4">
+          <v-col>
+            <v-text-field
+              v-model="otherOptions.saveFilenameTemplate"
+              color="primary"
+              label="保存文件名模板"
+              :hint="`预览：${previewFilenameResult}`"
+              :error="previewFilenameError"
+              @update:model-value="getPreviewFilename"
+              @focus="getPreviewFilename"
+            />
+          </v-col>
+
+          <v-col col="4">
+            <v-select
+              v-model="otherOptions.saveFormat"
+              color="primary"
+              label="视频格式"
+              placeholder="选择要保存的视频格式"
+              hide-details
+              :items="[
+                { title: 'MPEG-4', value: 'mp4' },
+                { title: 'Flash Video', value: 'flv' },
+                { title: 'QuickTime', value: 'mov' },
+                /* { title: 'HLS', value: 'm3u8' }, */
+              ]"
+            ></v-select>
+          </v-col>
+        </v-row>
       </v-card-text>
     </v-card>
 
@@ -386,3 +475,33 @@ export default {
     </v-dialog>
   </v-container>
 </template>
+
+<style>
+.log-area {
+  max-height: 280px;
+  color: #eeeeec;
+  overflow: auto;
+  overscroll-behavior: none;
+}
+
+.log-area.one-line span {
+  display: none;
+}
+
+.log-area.one-line span.latest-line {
+  display: inline;
+}
+
+.log-area::-webkit-scrollbar {
+  width: 16px;
+  background-color: transparent;
+}
+
+.log-area::-webkit-scrollbar-thumb {
+  height: 56px;
+  border-radius: 8px;
+  border: 4px solid transparent;
+  background-clip: content-box;
+  background-color: #606060;
+}
+</style>

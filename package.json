@@ -1,6 +1,6 @@
 {
   "name": "translime-plugin-rtmp-recorder",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "translime 插件：rtmp 流视频保存到文件",
   "license": "MIT",
   "keywords": [

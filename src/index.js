@@ -1,4 +1,4 @@
-import { resolve } from 'node:path';
+import { resolve } from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import pkg from '../package.json';
 
@@ -16,10 +16,13 @@ const stopRecord = (force = false) => {
   if (command) {
     command?.ffmpegProc?.stdin?.write('q');
     if (force) {
-      setTimeout(() => {
-        command?.kill('SIGINT');
-      }, 5000);
+      command?.ffmpegProc?.stdin?.write('\x03');
     }
+    const commandCopy = command;
+    command = null;
+    setTimeout(() => {
+      commandCopy?.kill('SIGINT');
+    }, 5000);
   }
 };
 
@@ -32,13 +35,14 @@ const ipcHandlers = [
         ...{
           splitTimeout: 60,
           saveFilenameTemplate: 'record_%03d',
+          saveFormat: 'mp4',
           audioCodec: 'copy',
           videoCodec: 'copy',
         },
         ...options,
       };
 
-      const getOutputFilePath = () => resolve(saveDir, `${finalOptions.saveFilenameTemplate}.mp4`);
+      const getOutputFilePath = () => resolve(saveDir, `${finalOptions.saveFilenameTemplate}.${finalOptions.saveFormat}`);
       const startRecord = () => {
         stopRecord();
         command = ffmpeg(url)
@@ -58,6 +62,9 @@ const ipcHandlers = [
           .on('progress', (progress) => {
             currentProgress = progress;
             sendToClient(`progress-reply@${id}`, currentProgress);
+          })
+          .on('stderr', (stderrLine) => {
+            sendToClient(`stderr-reply@${id}`, stderrLine);
           })
           .on('error', (err) => {
             sendToClient(`error-reply@${id}`, err.message);
