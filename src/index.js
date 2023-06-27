@@ -10,31 +10,45 @@ const setFfmpegPath = (ff, settingPath) => {
   }
 };
 
-let currentProgress = {};
-let command = null;
-const stopRecord = (force = false) => {
-  if (command) {
-    command?.ffmpegProc?.stdin?.write('q');
+const tasks = {};
+const stopRecord = (taskId, force = false) => {
+  // todo: 处理 ffprobe 进程残留
+  if (tasks[taskId] && tasks[taskId].command) {
+    tasks[taskId]?.command?.ffmpegProc?.stdin?.write('q');
     if (force) {
-      command?.ffmpegProc?.stdin?.write('\x03');
+      tasks[taskId]?.command?.ffmpegProc?.stdin?.write('\x03');
     }
-    const commandCopy = command;
-    command = null;
+    const commandCopy = tasks[taskId]?.command;
+    delete tasks[taskId];
     setTimeout(() => {
       commandCopy?.kill('SIGINT');
     }, 5000);
   }
+};
+const stopAll = () => {
+  const ids = Object.keys(tasks);
+  if (!ids.length) {
+    return;
+  }
+  ids.forEach((taskId) => {
+    stopRecord(taskId, true);
+  });
 };
 
 // ipc 定义
 const ipcHandlers = [
   {
     type: 'record',
-    handler: ({ sendToClient }) => ({ url, saveDir, options = {} }) => {
+    handler: ({ sendToClient }) => ({
+      taskId,
+      url,
+      saveDir,
+      options = {},
+    }) => {
       const finalOptions = {
         ...{
           splitTimeout: 60,
-          saveFilenameTemplate: 'record_%03d',
+          saveFilenameTemplate: 'record',
           saveFormat: 'mp4',
           audioCodec: 'copy',
           videoCodec: 'copy',
@@ -42,32 +56,39 @@ const ipcHandlers = [
         ...options,
       };
 
-      const getOutputFilePath = () => resolve(saveDir, `${finalOptions.saveFilenameTemplate}.${finalOptions.saveFormat}`);
+      const autoSplit = typeof finalOptions.splitTimeout === 'number' && finalOptions.splitTimeout > 0;
+      const getOutputFilePath = () => resolve(saveDir, `${finalOptions.saveFilenameTemplate}${autoSplit ? '_%03d' : ''}.${finalOptions.saveFormat}`);
       const startRecord = () => {
-        stopRecord();
-        command = ffmpeg(url)
+        tasks[taskId] = {
+          command: null,
+          progress: {},
+        };
+        tasks[taskId].command = ffmpeg(url)
           .output(getOutputFilePath())
           .audioCodec(finalOptions.audioCodec)
           .videoCodec(finalOptions.videoCodec);
-        if (typeof finalOptions.splitTimeout === 'number' && finalOptions.splitTimeout > 0) {
-          command.outputOptions([
+        if (autoSplit) {
+          tasks[taskId].command.outputOptions([
             '-f segment', // 分割输出为多个文件
             `-segment_time ${finalOptions.splitTimeout}`, // 分割时长
             '-reset_timestamps 1', // 重置分段文件的时间戳
           ]);
         }
-        command.on('end', () => {
-          sendToClient(`stop-reply@${id}`);
+        tasks[taskId].command.on('end', () => {
+          sendToClient(`stop-reply@${id}`, { taskId });
         })
           .on('progress', (progress) => {
-            currentProgress = progress;
-            sendToClient(`progress-reply@${id}`, currentProgress);
+            if (!tasks[taskId]) {
+              return;
+            }
+            tasks[taskId].progress = progress;
+            sendToClient(`progress-reply@${id}`, { taskId, progress: tasks[taskId].progress });
           })
           .on('stderr', (stderrLine) => {
-            sendToClient(`stderr-reply@${id}`, stderrLine);
+            sendToClient(`stderr-reply@${id}`, { taskId, stderrLine });
           })
           .on('error', (err) => {
-            sendToClient(`error-reply@${id}`, err.message);
+            sendToClient(`error-reply@${id}`, { taskId, error: err.message });
           })
           .run();
       };
@@ -77,8 +98,12 @@ const ipcHandlers = [
   },
   {
     type: 'stop',
-    handler: () => () => {
-      stopRecord(true);
+    handler: () => (taskId) => {
+      if (taskId) {
+        stopRecord(taskId, true);
+      } else {
+        stopAll();
+      }
     },
   },
 ];
@@ -93,7 +118,7 @@ const pluginDidLoad = () => {
 
 // 禁用时执行
 const pluginWillUnload = () => {
-  stopRecord();
+  stopAll();
 };
 
 const pluginSettingSaved = () => {
