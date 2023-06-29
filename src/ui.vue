@@ -1,5 +1,6 @@
 <script setup>
 import {
+  computed,
   ref,
   onMounted,
   toRaw,
@@ -17,34 +18,30 @@ const useStore = () => {
     audioCodec: 'copy',
     videoCodec: 'copy',
   });
-  const isProcessing = ref(false);
-  const tryStop = ref(false);
   const previewFilenameError = ref(false);
   const previewFilenameResult = ref('');
-  const currentProgress = ref({});
-  const error = ref('');
-  const checkProgressTimer = ref(null);
-  const stdLines = ref({
-    logs: [],
-    latest: '',
-    oneLine: true,
-  });
   const tasks = ref([]);
+  const recordTaskPanel = ref({
+    visible: false,
+    taskId: null,
+  });
+  const currentTaskDetail = computed(() => {
+    const task = tasks.value.find((t) => t.taskId === recordTaskPanel.value.taskId);
+    return task || null;
+  });
+  const hasProcessingTasks = computed(() => !!tasks.value.filter((t) => t.isProcessing).length);
 
   return {
     pluginId,
     url,
     saveDir,
     otherOptions,
-    isProcessing,
-    tryStop,
     previewFilenameError,
     previewFilenameResult,
-    currentProgress,
-    error,
-    checkProgressTimer,
-    stdLines,
     tasks,
+    recordTaskPanel,
+    currentTaskDetail,
+    hasProcessingTasks,
   };
 };
 const store = useStore();
@@ -52,14 +49,12 @@ const {
   url,
   saveDir,
   otherOptions,
-  isProcessing,
-  tryStop,
   previewFilenameError,
   previewFilenameResult,
-  currentProgress,
-  error,
-  stdLines,
   tasks,
+  recordTaskPanel,
+  currentTaskDetail,
+  hasProcessingTasks,
 } = store;
 const ipc = window.electron.useIpc();
 const { showOpenDialog } = window.electron.dialog;
@@ -103,6 +98,7 @@ const useAlert = () => {
   };
 };
 const alert = useAlert();
+const confirm = useAlert();
 
 const useSelectDir = () => {
   const selectDirError = ref('');
@@ -197,15 +193,22 @@ const useRecord = (state) => {
       return;
     }
     const taskId = getUuiD();
-    state.stdLines.value.latest = '';
-    state.stdLines.value.logs = [];
-    state.tasks.value.push({
+    const task = {
       taskId,
+      recordInfo: {
+        url: state.url.value,
+        saveDir: state.saveDir.value,
+        options: { ...toRaw(state.otherOptions.value), saveFilenameTemplate: getSaveFilenameTemplate() },
+      },
       currentProgress: {},
       error: '',
       checkProgressTimer: setTimeout(() => {
-        stop();
-        alert.show('录制进程30没有返回进度信息，进程已强制关闭。');
+        confirm.show('录制进程30没有返回进度信息，是否强制关闭录制进程已。')
+          .then((result) => {
+            if (result) {
+              stop(taskId);
+            }
+          });
       }, 30000),
       stdLines: {
         logs: [],
@@ -214,7 +217,8 @@ const useRecord = (state) => {
       },
       isProcessing: true,
       tryStop: false,
-    });
+    };
+    state.tasks.value.push(task);
     ipc.send(`record@${state.pluginId}`, {
       taskId,
       url: state.url.value,
@@ -223,6 +227,17 @@ const useRecord = (state) => {
     });
     saveOptions();
   };
+  const remove = (taskId) => {
+    const taskIndex = state.tasks.value.findIndex((t) => t.taskId === taskId);
+    if (taskIndex > -1 && !state.tasks.value[taskIndex].isProcessing && !state.tasks.value[taskIndex].tryStop) {
+      state.tasks.value.splice(taskIndex, 1);
+    }
+  };
+  const showDetailPanel = (id) => {
+    state.recordTaskPanel.value.visible = true;
+    state.recordTaskPanel.value.taskId = id;
+  };
+
   // 进度
   const onProgress = () => {
     ipc.on(`progress-reply@${state.pluginId}`, ({ taskId, progress }) => {
@@ -282,6 +297,8 @@ const useRecord = (state) => {
     getOptions,
     start,
     stop,
+    remove,
+    showDetailPanel,
     onProgress,
     onError,
     onStop,
@@ -334,24 +351,47 @@ export default {
 <template>
   <v-container class="plugin-main">
 
+    <v-row class="mb-2">
+      <v-col
+        sm="12"
+        md="6"
+        lg="4"
+        v-for="task in tasks"
+        :key="task.taskId"
+      >
+        <v-card rounded="xl" variant="tonal" :disabled="task.tryStop" @click="record.showDetailPanel(task.taskId)">
+          <v-list>
+            <v-list-item>
+              <template v-slot:prepend>
+                <v-avatar color="primary">
+                  <v-progress-circular v-if="task.isProcessing" indeterminate></v-progress-circular>
+                  <v-icon v-else>done</v-icon>
+                </v-avatar>
+              </template>
+
+              <template v-slot:append>
+                <v-btn v-if="!task.isProcessing" icon="close" variant="plain" @click.stop="record.remove(task.taskId)"></v-btn>
+                <v-btn v-else icon="stop" variant="plain" @click.stop="record.stop(task.taskId)"></v-btn>
+              </template>
+
+              <v-list-item-title :title="task.recordInfo.url">{{ task.recordInfo.url }}</v-list-item-title>
+
+              <v-list-item-subtitle v-if="!task.error">
+                <span>时长：</span>
+                <span v-text="task.currentProgress?.timemark"></span>
+                <span class="ml-2">frames：</span>
+                <span v-text="task.currentProgress?.frames"></span>
+                <span class="ml-2">fps：</span>
+                <span v-text="task.currentProgress?.currentFps"></span>
+              </v-list-item-subtitle>
+              <v-list-item-subtitle v-else :title="task.error">{{ task.error }}</v-list-item-subtitle>
+            </v-list-item>
+          </v-list>
+        </v-card>
+      </v-col>
+    </v-row>
+
     <v-card rounded="xl" variant="tonal">
-      <v-list>
-        <v-list-item>
-          <template v-slot:prepend>
-            <v-avatar color="primary">
-              <v-icon>event_note</v-icon>
-            </v-avatar>
-          </template>
-          <v-list-item-title>当前进行中的任务</v-list-item-title>
-        </v-list-item>
-      </v-list>
-
-      <v-card-text>
-        <pre v-text="tasks"></pre>
-      </v-card-text>
-    </v-card>
-
-    <v-card class="mt-4" rounded="xl" variant="tonal">
       <v-list>
         <v-list-item>
           <template v-slot:prepend>
@@ -380,62 +420,28 @@ export default {
           />
         </div>
 
-        <div v-if="error" class="mt-4">
-          出错了：{{ error }}
-        </div>
-
-        <div v-if="isProcessing" class="mt-4">
-          <span>当前帧：</span>
-          <span v-text="currentProgress?.frames"></span>
-          <span class="ml-2">fps：</span>
-          <span v-text="currentProgress?.currentFps"></span>
-          <span class="ml-2">时长：</span>
-          <span v-text="currentProgress?.timemark"></span>
-        </div>
-
         <div class="d-flex align-center mt-4">
-          <v-btn
-            v-if="stdLines.latest || stdLines.logs.length"
-            class="mr-4"
-            color="primary"
-            rounded="pill"
-            variant="outlined"
-            @click="stdLines.oneLine = !stdLines.oneLine"
-          >
-            切换输出窗口
-          </v-btn>
-
           <v-spacer />
 
           <v-btn
-            v-if="tasks.length"
+            v-if="hasProcessingTasks"
             class="mr-4"
             color="primary"
             rounded="pill"
             variant="outlined"
-            :disabled="tryStop"
             @click="record.stop()"
           >
-            停止录制
+            全部停止
           </v-btn>
 
           <v-btn
             color="primary"
             rounded="pill"
-            :disabled="tryStop"
             @click="record.start"
           >
-            开始录制
+            添加录制
           </v-btn>
         </div>
-
-        <v-sheet v-if="stdLines.latest || stdLines.logs.length" class="mt-4 text-white" color="#300a24" rounded>
-          <pre class="log-area pa-2" :class="{ 'one-line': stdLines.oneLine }"><span
-            v-for="(line, index) in stdLines.logs"
-            :key="index"
-            v-text="`${line}\n`"
-          ></span><span class="latest-line" v-text="stdLines.latest"></span></pre>
-        </v-sheet>
       </v-card-text>
     </v-card>
 
@@ -541,6 +547,74 @@ export default {
       </v-card-text>
     </v-card>
 
+    <v-bottom-sheet v-model="recordTaskPanel.visible" inset>
+      <v-sheet class="rounded-t-xl overflow-hidden d-flex flex-column">
+        <div class="flex-shrink-0">
+          <v-list>
+            <v-list-item>
+              <template v-slot:prepend>
+                <v-avatar color="primary">
+                  <v-progress-circular v-if="currentTaskDetail.isProcessing" indeterminate></v-progress-circular>
+                  <v-icon v-else>done</v-icon>
+                </v-avatar>
+              </template>
+
+              <v-list-item-title :title="currentTaskDetail.recordInfo.url">{{ currentTaskDetail.recordInfo.url }}</v-list-item-title>
+
+              <v-list-item-subtitle v-if="!currentTaskDetail.error">
+                <span>时长：</span>
+                <span v-text="currentTaskDetail.currentProgress?.timemark"></span>
+                <span class="ml-2">frames：</span>
+                <span v-text="currentTaskDetail.currentProgress?.frames"></span>
+                <span class="ml-2">fps：</span>
+                <span v-text="currentTaskDetail.currentProgress?.currentFps"></span>
+              </v-list-item-subtitle>
+              <v-list-item-subtitle v-else :title="currentTaskDetail.error">{{ currentTaskDetail.error }}</v-list-item-subtitle>
+            </v-list-item>
+          </v-list>
+        </div>
+
+        <div class="flex-fill overflow-auto h-min-0 pa-4">
+          <p>录制源：{{ currentTaskDetail.recordInfo.url }}</p>
+          <p>保存位置：{{ currentTaskDetail.recordInfo.saveDir }}</p>
+
+          <v-sheet
+            v-if="currentTaskDetail.stdLines.latest || currentTaskDetail.stdLines.logs.length"
+            class="mt-4 text-white"
+            color="#300a24"
+            rounded
+          >
+            <pre
+              class="log-area pa-2"
+              :class="{ 'one-line': currentTaskDetail.stdLines.oneLine }"
+            ><span
+              v-for="(line, index) in currentTaskDetail.stdLines.logs"
+              :key="index"
+              v-text="`${line}\n`"
+            ></span><span
+              class="latest-line"
+              v-text="currentTaskDetail.stdLines.latest"
+            ></span></pre>
+          </v-sheet>
+
+          <div class="mt-4 d-flex">
+            <v-spacer />
+
+            <v-btn
+              v-if="currentTaskDetail.stdLines.latest || currentTaskDetail.stdLines.logs.length"
+              class="mr-4"
+              color="primary"
+              rounded="pill"
+              variant="outlined"
+              @click="currentTaskDetail.stdLines.oneLine = !currentTaskDetail.stdLines.oneLine"
+            >
+              切换输出窗口
+            </v-btn>
+          </div>
+        </div>
+      </v-sheet>
+    </v-bottom-sheet>
+
     <v-dialog
       :model-value="alert.isVisible.value"
       :update:modelValue="alert.onCancel"
@@ -559,6 +633,25 @@ export default {
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <v-dialog
+      :model-value="confirm.isVisible.value"
+      :update:modelValue="confirm.onCancel"
+      width="350"
+      persistent
+    >
+      <v-card>
+        <v-card-title>提示</v-card-title>
+
+        <v-card-text>{{ confirm.message.value }}</v-card-text>
+
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="confirm.onCancel">取消</v-btn>
+          <v-btn color="primary" @click="confirm.onConfirm">确定</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -568,6 +661,7 @@ export default {
   color: #eeeeec;
   overflow: auto;
   overscroll-behavior: none;
+  font-family: "Source Code Pro", monospace;
 }
 
 .log-area.one-line span {
@@ -578,12 +672,16 @@ export default {
   display: inline;
 }
 
-.log-area::-webkit-scrollbar {
+.h-min-0 {
+  min-height: 0;
+}
+
+::-webkit-scrollbar {
   width: 16px;
   background-color: transparent;
 }
 
-.log-area::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   height: 56px;
   border-radius: 8px;
   border: 4px solid transparent;
