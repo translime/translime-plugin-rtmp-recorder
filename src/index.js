@@ -3,6 +3,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import pkg from '../package.json';
 
 const id = pkg.name;
+const config = global.store || global.mainStore.config;
 
 const setFfmpegPath = (ff, settingPath) => {
   if (typeof settingPath?.[0] === 'string') {
@@ -110,7 +111,7 @@ const ipcHandlers = [
 
 // 加载时执行
 const pluginDidLoad = () => {
-  const setting = global.store.get(`plugin.${id}.settings`, {});
+  const setting = config.get(`plugin.${id}.settings`, {});
   if (setting['ffmpeg-path']) {
     setFfmpegPath(ffmpeg, setting['ffmpeg-path']);
   }
@@ -122,7 +123,7 @@ const pluginWillUnload = () => {
 };
 
 const pluginSettingSaved = () => {
-  const setting = global.store.get(`plugin.${id}.settings`, {});
+  const setting = config.get(`plugin.${id}.settings`, {});
   if (setting['ffmpeg-path']) {
     setFfmpegPath(ffmpeg, setting['ffmpeg-path']);
   }
@@ -146,7 +147,7 @@ const settingMenu = [
   },
 ];
 
-module.exports = {
+export default {
   pluginDidLoad,
   pluginWillUnload,
   pluginSettingSaved,
