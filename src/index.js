@@ -1,6 +1,6 @@
-import { resolve } from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import pkg from '../package.json';
+import record from './record';
 
 const id = pkg.name;
 const config = global.store || global.mainStore.config;
@@ -11,99 +11,21 @@ const setFfmpegPath = (ff, settingPath) => {
   }
 };
 
-const tasks = {};
-const stopRecord = (taskId, force = false) => {
-  // todo: 处理 ffprobe 进程残留
-  if (tasks[taskId] && tasks[taskId].command) {
-    tasks[taskId]?.command?.ffmpegProc?.stdin?.write('q');
-    if (force) {
-      tasks[taskId]?.command?.ffmpegProc?.stdin?.write('\x03');
-    }
-    const commandCopy = tasks[taskId]?.command;
-    delete tasks[taskId];
-    setTimeout(() => {
-      commandCopy?.kill('SIGINT');
-    }, 5000);
-  }
-};
-const stopAll = () => {
-  const ids = Object.keys(tasks);
-  if (!ids.length) {
-    return;
-  }
-  ids.forEach((taskId) => {
-    stopRecord(taskId, true);
-  });
-};
-
 // ipc 定义
 const ipcHandlers = [
   {
     type: 'record',
-    handler: ({ sendToClient }) => ({
-      taskId,
-      url,
-      saveDir,
-      options = {},
-    }) => {
-      const finalOptions = {
-        ...{
-          splitTimeout: 60,
-          saveFilenameTemplate: 'record',
-          saveFormat: 'mp4',
-          audioCodec: 'copy',
-          videoCodec: 'copy',
-        },
-        ...options,
-      };
-
-      const autoSplit = typeof finalOptions.splitTimeout === 'number' && finalOptions.splitTimeout > 0;
-      const getOutputFilePath = () => resolve(saveDir, `${finalOptions.saveFilenameTemplate}${autoSplit ? '_%03d' : ''}.${finalOptions.saveFormat}`);
-      const startRecord = () => {
-        tasks[taskId] = {
-          command: null,
-          progress: {},
-        };
-        tasks[taskId].command = ffmpeg(url)
-          .output(getOutputFilePath())
-          .audioCodec(finalOptions.audioCodec)
-          .videoCodec(finalOptions.videoCodec);
-        if (autoSplit) {
-          tasks[taskId].command.outputOptions([
-            '-f segment', // 分割输出为多个文件
-            `-segment_time ${finalOptions.splitTimeout}`, // 分割时长
-            '-reset_timestamps 1', // 重置分段文件的时间戳
-          ]);
-        }
-        tasks[taskId].command.on('end', () => {
-          sendToClient(`stop-reply@${id}`, { taskId });
-        })
-          .on('progress', (progress) => {
-            if (!tasks[taskId]) {
-              return;
-            }
-            tasks[taskId].progress = progress;
-            sendToClient(`progress-reply@${id}`, { taskId, progress: tasks[taskId].progress });
-          })
-          .on('stderr', (stderrLine) => {
-            sendToClient(`stderr-reply@${id}`, { taskId, stderrLine });
-          })
-          .on('error', (err) => {
-            sendToClient(`error-reply@${id}`, { taskId, error: err.message });
-          })
-          .run();
-      };
-
-      startRecord();
+    handler: ({ sendToClient }) => (args) => {
+      record.start(sendToClient, args);
     },
   },
   {
     type: 'stop',
     handler: () => (taskId) => {
       if (taskId) {
-        stopRecord(taskId, true);
+        record.stop(taskId, true);
       } else {
-        stopAll();
+        record.stopAll();
       }
     },
   },
@@ -119,7 +41,7 @@ const pluginDidLoad = () => {
 
 // 禁用时执行
 const pluginWillUnload = () => {
-  stopAll();
+  record.stopAll();
 };
 
 const pluginSettingSaved = () => {
