@@ -435,11 +435,20 @@ export default {
           </v-btn>
 
           <v-btn
+            class="mr-4"
             color="primary"
             rounded="pill"
             @click="record.start"
           >
-            添加录制
+            持续录制
+          </v-btn>
+
+          <v-btn
+            color="primary"
+            rounded="pill"
+            @click="record.start"
+          >
+            一次性录制
           </v-btn>
         </div>
       </v-card-text>

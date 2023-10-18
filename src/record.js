@@ -8,6 +8,32 @@ class Record extends EventEmitter {
     super();
     this.id = pkg.name;
     this.tasks = {};
+    this.recordList = [];
+  }
+
+  addTask(sendToClient, {
+    taskId,
+    url,
+    saveDir,
+    options = {},
+  }) {
+    this.tasks[taskId] = {
+      recordInfo: {
+        url,
+        saveDir,
+        options: {
+          ...{
+            splitTimeout: 60,
+            saveFilenameTemplate: 'record',
+            saveFormat: 'mp4',
+            audioCodec: 'copy',
+            videoCodec: 'copy',
+          },
+          ...options,
+        },
+      },
+      error: '',
+    };
   }
 
   start(sendToClient, {
